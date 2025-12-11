@@ -6,7 +6,7 @@ import {
   RotateCcw,
   Share2,
   Download,
-  TriangleAlert,
+
   Fingerprint,
   Lock,
   Camera,
@@ -370,7 +370,7 @@ export default function App() {
           <div className="relative">
             <div className={`absolute inset-0 ${THEME.accentBg} blur-xl opacity-50 animate-pulse`}></div>
             <div className="relative bg-black p-6 rounded-3xl border border-white/10 shadow-2xl">
-              <TriangleAlert className={THEME.accent} size={48} strokeWidth={2.5} />
+              <img src="/logo.png" alt="Logo" className="w-12 h-12" />
             </div>
           </div>
           <div className="text-center space-y-2">
