@@ -22,6 +22,7 @@ import confetti from 'canvas-confetti';
 import { AppView, ExcuseOption, UserState, HistoryItem } from './types';
 import { generateEvidence } from './services/geminiService';
 import { loadStripe } from '@stripe/stripe-js';
+import { CyberShield } from './src/components/CyberShield';
 
 // Initialize Stripe outside component
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
@@ -366,11 +367,14 @@ export default function App() {
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] glow-effect rounded-full blur-[80px] opacity-40 pointer-events-none" />
 
       <div className="z-10 w-full max-w-md flex flex-col items-center space-y-12">
+        {/* Logo Section */}
         <div className="flex flex-col items-center space-y-6">
-          <div className="relative">
-            <div className={`absolute inset-0 ${THEME.accentBg} blur-xl opacity-50 animate-pulse`}></div>
-            <div className="relative bg-black p-6 rounded-3xl border border-white/10 shadow-2xl">
-              <img src="/logo.png" alt="Logo" className="w-12 h-12" />
+          <div className="relative group">
+            {/* Glow behind the icon */}
+            <div className={`absolute inset-0 ${THEME.accentBg} blur-[40px] opacity-40 group-hover:opacity-60 transition-opacity duration-500`}></div>
+            {/* Main App Icon Container */}
+            <div className="relative bg-black p-8 rounded-[2rem] shadow-2xl flex items-center justify-center border border-white/5">
+              <CyberShield className={THEME.accent} size={64} strokeWidth={1.5} />
             </div>
           </div>
           <div className="text-center space-y-2">
