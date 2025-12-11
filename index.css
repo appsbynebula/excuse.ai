@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    background-color: #050505;
+    color: white;
+}
+
+/* Custom Utilities used in App.tsx */
+@layer utilities {
+    .glow-effect {
+        background: radial-gradient(circle, rgba(255, 87, 34, 0.4) 0%, rgba(0, 0, 0, 0) 70%);
+    }
+
+    .animate-fade-in-up {
+        animation: fadeInUp 0.5s ease-out forwards;
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

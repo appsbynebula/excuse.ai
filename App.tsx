@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Siren, 
-  ChevronRight, 
-  Zap, 
-  RotateCcw, 
-  Share2, 
-  Download, 
-  TriangleAlert, 
+import {
+  Siren,
+  ChevronRight,
+  Zap,
+  RotateCcw,
+  Share2,
+  Download,
+  TriangleAlert,
   Fingerprint,
   Lock,
   Camera,
@@ -21,6 +21,10 @@ import {
 import confetti from 'canvas-confetti';
 import { AppView, ExcuseOption, UserState, HistoryItem } from './types';
 import { generateEvidence } from './services/geminiService';
+import { loadStripe } from '@stripe/stripe-js';
+
+// Initialize Stripe outside component
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
 
 // --- Constants ---
 const THEME = {
@@ -51,17 +55,17 @@ const ENTRY_SOUND = "data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AA
 
 // --- Components ---
 
-const Button = ({ 
-  children, 
-  onClick, 
-  variant = 'primary', 
-  className = '', 
+const Button = ({
+  children,
+  onClick,
+  variant = 'primary',
+  className = '',
   icon: Icon,
   disabled
-}: { 
-  children?: React.ReactNode; 
-  onClick?: () => void; 
-  variant?: 'primary' | 'secondary' | 'ghost' | 'premium'; 
+}: {
+  children?: React.ReactNode;
+  onClick?: () => void;
+  variant?: 'primary' | 'secondary' | 'ghost' | 'premium';
   className?: string;
   icon?: React.ElementType;
   disabled?: boolean;
@@ -75,8 +79,8 @@ const Button = ({
   };
 
   return (
-    <button 
-      onClick={onClick} 
+    <button
+      onClick={onClick}
       disabled={disabled}
       className={`${baseStyles} ${variants[variant]} ${className}`}
     >
@@ -97,7 +101,7 @@ const Input = ({
   value?: string,
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void
 }) => (
-  <input 
+  <input
     type={type}
     placeholder={placeholder}
     value={value}
@@ -113,17 +117,49 @@ export default function App() {
   const [prompt, setPrompt] = useState('');
   const [referenceImage, setReferenceImage] = useState<string | null>(null); // For image-to-image
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
-  const [userState, setUserState] = useState<UserState>({ 
-    credits: 1, 
-    isPremium: false, 
+  const [userState, setUserState] = useState<UserState>({
+    credits: 1,
+    isPremium: false,
     isGuest: false,
-    history: [] 
+    history: []
   });
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [hasWelcomed, setHasWelcomed] = useState(false); // Track if celebration happened
   const [authMode, setAuthMode] = useState<'menu' | 'email'>('menu'); // Auth screen state
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Persistence & Init ---
+
+  useEffect(() => {
+    // 1. Load state
+    const saved = localStorage.getItem('excuse_ai_state');
+    if (saved) {
+      setUserState(JSON.parse(saved));
+    }
+
+    // 2. Check Stripe Return
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('success')) {
+      setUserState(prev => {
+        const newState = { ...prev, isPremium: true, credits: 999 };
+        localStorage.setItem('excuse_ai_state', JSON.stringify(newState));
+        return newState;
+      });
+      setView(AppView.DASHBOARD);
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setTimeout(() => triggerConfetti(), 500);
+    } else if (query.get('canceled')) {
+      setView(AppView.PREMIUM);
+      alert("Payment canceled.");
+    }
+  }, []);
+
+  // Save state on change
+  useEffect(() => {
+    localStorage.setItem('excuse_ai_state', JSON.stringify(userState));
+  }, [userState]);
 
   // Play sound effect
   const playSound = () => {
@@ -189,9 +225,9 @@ export default function App() {
   // Effect when entering dashboard (Run only once)
   useEffect(() => {
     if (view === AppView.DASHBOARD && !hasWelcomed) {
-       triggerConfetti();
-       playSound();
-       setHasWelcomed(true);
+      triggerConfetti();
+      playSound();
+      setHasWelcomed(true);
     }
   }, [view, hasWelcomed]);
 
@@ -227,11 +263,11 @@ export default function App() {
     }
 
     setView(AppView.GENERATING);
-    
+
     try {
       const imageUrl = await generateEvidence(prompt, referenceImage);
       setGeneratedImage(imageUrl);
-      
+
       // Update state
       setUserState(prev => {
         const newHistory = prev.isGuest ? [] : [{
@@ -240,14 +276,14 @@ export default function App() {
           date: new Date().toLocaleDateString(),
           imageUrl: imageUrl
         }, ...prev.history];
-        
-        return { 
-          ...prev, 
+
+        return {
+          ...prev,
           credits: Math.max(0, prev.credits - 1),
           history: newHistory
         };
       });
-      
+
       setView(AppView.RESULT);
     } catch (e) {
       console.error(e);
@@ -269,7 +305,7 @@ export default function App() {
       // 1. Fetch the image and convert to Blob
       const response = await fetch(generatedImage);
       const blob = await response.blob();
-      
+
       // 2. Create a File object
       const file = new File([blob], "evidence.png", { type: blob.type });
 
@@ -289,9 +325,38 @@ export default function App() {
     }
   };
 
-  const handleUnlock = () => {
-    setUserState(prev => ({ ...prev, isPremium: true, credits: 999 }));
-    setView(AppView.DASHBOARD);
+  const handleUnlock = async () => {
+    try {
+      const stripe = await stripePromise;
+      if (!stripe) throw new Error("Stripe not initialized");
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const priceId = import.meta.env.VITE_STRIPE_PRICE_ID;
+
+      if (!supabaseUrl || !priceId) {
+        throw new Error("Missing config");
+      }
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/create-checkout-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          priceId: priceId,
+          returnUrl: window.location.origin
+        })
+      });
+
+      const { url, error } = await response.json();
+      if (error) throw new Error(error);
+      if (url) window.location.href = url;
+
+    } catch (e) {
+      console.warn("Payment failed (Dev Mode fallback):", e);
+      // Fallback for dev/demo: Unlock anyway so user can test
+      setUserState(prev => ({ ...prev, isPremium: true, credits: 999 }));
+      setView(AppView.DASHBOARD);
+      alert("Dev Mode: Payment bypassed (Supabase function not reachable). Premium unlocked.");
+    }
   };
 
   // --- Screens ---
@@ -299,7 +364,7 @@ export default function App() {
   const AuthScreen = () => (
     <div className={`h-screen w-full flex flex-col items-center justify-center p-6 relative overflow-hidden ${THEME.bg}`}>
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] glow-effect rounded-full blur-[80px] opacity-40 pointer-events-none" />
-      
+
       <div className="z-10 w-full max-w-md flex flex-col items-center space-y-12">
         <div className="flex flex-col items-center space-y-6">
           <div className="relative">
@@ -311,7 +376,7 @@ export default function App() {
           <div className="text-center space-y-2">
             <h1 className="text-4xl font-bold tracking-tight text-white">Excuse.AI</h1>
             <p className="text-white/50 text-lg font-medium max-w-[280px]">
-              Stop making up bad lies. <br/>
+              Stop making up bad lies. <br />
               <span className={THEME.accent}>Let AI generate the evidence.</span>
             </p>
           </div>
@@ -329,9 +394,9 @@ export default function App() {
               <Button variant="ghost" onClick={() => setAuthMode('email')} icon={Mail}>
                 Use Email or Phone
               </Button>
-              
+
               <div className="pt-4">
-                <button 
+                <button
                   onClick={() => handleLogin(true)}
                   className="w-full text-center text-sm text-white/30 font-semibold hover:text-white transition-colors"
                 >
@@ -346,7 +411,7 @@ export default function App() {
               <Button variant="primary" onClick={() => handleLogin(false)}>
                 Sign In / Register
               </Button>
-              <button 
+              <button
                 onClick={() => setAuthMode('menu')}
                 className="w-full flex items-center justify-center gap-2 text-white/50 hover:text-white py-2 font-medium"
               >
@@ -364,28 +429,28 @@ export default function App() {
       {/* Header */}
       <header className="p-6 flex justify-between items-center z-10">
         <div className="flex items-center gap-2">
-           <Siren className={THEME.accent} size={24} />
-           <span className="font-bold text-lg tracking-tight">Crisis Center</span>
+          <Siren className={THEME.accent} size={24} />
+          <span className="font-bold text-lg tracking-tight">Crisis Center</span>
         </div>
         <div className="bg-white/5 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-full flex items-center gap-2">
-          <Zap size={14} className={userState.credits > 0 ? 'text-yellow-400' : 'text-gray-500'} fill={userState.credits > 0 ? 'currentColor' : 'none'}/>
+          <Zap size={14} className={userState.credits > 0 ? 'text-yellow-400' : 'text-gray-500'} fill={userState.credits > 0 ? 'currentColor' : 'none'} />
           <span className="text-sm font-mono font-bold">{userState.credits} Credit</span>
         </div>
       </header>
 
       <main className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full relative z-10 pb-20">
         <div className="flex-1 flex flex-col space-y-8">
-          
+
           {/* Main Input */}
           <div className="space-y-4">
             <div>
-                <label className="text-white/60 text-sm font-bold uppercase tracking-wider ml-1">
+              <label className="text-white/60 text-sm font-bold uppercase tracking-wider ml-1">
                 What happened?
-                </label>
-                <p className="text-xs text-white/30 ml-1 mt-1">Describe the situation you want to fake so we can generate the perfect alibi photo.</p>
+              </label>
+              <p className="text-xs text-white/30 ml-1 mt-1">Describe the situation you want to fake so we can generate the perfect alibi photo.</p>
             </div>
-            
-            <textarea 
+
+            <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="e.g. My car won't start because the battery is dead..."
@@ -393,40 +458,40 @@ export default function App() {
             />
           </div>
 
-           {/* Reference Image Input */}
-           <div className="space-y-2">
+          {/* Reference Image Input */}
+          <div className="space-y-2">
             <label className="text-white/60 text-xs font-bold uppercase tracking-wider ml-1 flex items-center gap-2">
-               <Camera size={14} /> Add Realism (Optional)
+              <Camera size={14} /> Add Realism (Optional)
             </label>
-            <div 
-                onClick={() => fileInputRef.current?.click()}
-                className={`w-full h-24 rounded-2xl border border-dashed ${THEME.border} ${THEME.surface} flex items-center justify-center cursor-pointer hover:bg-white/5 transition-colors relative overflow-hidden`}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className={`w-full h-24 rounded-2xl border border-dashed ${THEME.border} ${THEME.surface} flex items-center justify-center cursor-pointer hover:bg-white/5 transition-colors relative overflow-hidden`}
             >
-                {referenceImage ? (
-                    <div className="relative w-full h-full group">
-                        <img src={referenceImage} alt="Reference" className="w-full h-full object-cover opacity-60" />
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                            <span className="text-xs text-white font-bold">Change Image</span>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="text-center space-y-1">
-                        <ImagePlus className="mx-auto text-white/40" size={20} />
-                        <p className="text-xs text-white/40 font-medium">Upload base photo</p>
-                    </div>
-                )}
-                <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    onChange={handleImageUpload} 
-                    accept="image/*" 
-                    className="hidden" 
-                />
+              {referenceImage ? (
+                <div className="relative w-full h-full group">
+                  <img src={referenceImage} alt="Reference" className="w-full h-full object-cover opacity-60" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                    <span className="text-xs text-white font-bold">Change Image</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center space-y-1">
+                  <ImagePlus className="mx-auto text-white/40" size={20} />
+                  <p className="text-xs text-white/40 font-medium">Upload base photo</p>
+                </div>
+              )}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                accept="image/*"
+                className="hidden"
+              />
             </div>
           </div>
 
           <div className="space-y-3">
-             <label className="text-white/40 text-xs font-bold uppercase tracking-wider ml-1">
+            <label className="text-white/40 text-xs font-bold uppercase tracking-wider ml-1">
               Quick Emergencies
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -443,23 +508,23 @@ export default function App() {
             </div>
           </div>
 
-           {/* History Section - Only for logged in users */}
-           {!userState.isGuest && userState.history.length > 0 && (
+          {/* History Section - Only for logged in users */}
+          {!userState.isGuest && userState.history.length > 0 && (
             <div className="space-y-3 pt-4 border-t border-white/5">
-                <label className="text-white/40 text-xs font-bold uppercase tracking-wider ml-1 flex items-center gap-2">
-                  <History size={12} /> Past Alibis
-                </label>
-                <div className="space-y-2">
-                    {userState.history.map((item) => (
-                        <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
-                            <img src={item.imageUrl} alt="thumb" className="w-10 h-10 rounded-lg object-cover grayscale opacity-70" />
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-white truncate">{item.prompt}</p>
-                                <p className="text-xs text-white/30">{item.date}</p>
-                            </div>
-                        </div>
-                    ))}
-                </div>
+              <label className="text-white/40 text-xs font-bold uppercase tracking-wider ml-1 flex items-center gap-2">
+                <History size={12} /> Past Alibis
+              </label>
+              <div className="space-y-2">
+                {userState.history.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
+                    <img src={item.imageUrl} alt="thumb" className="w-10 h-10 rounded-lg object-cover grayscale opacity-70" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{item.prompt}</p>
+                      <p className="text-xs text-white/30">{item.date}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -469,11 +534,11 @@ export default function App() {
           <Button onClick={handleGenerate} disabled={!prompt}>
             Generate Proof
           </Button>
-          
+
           {!userState.isPremium && (
-            <button 
-                onClick={() => setView(AppView.PREMIUM)}
-                className="w-full flex items-center justify-center gap-2 text-sm text-[#FF5722] opacity-80 hover:opacity-100 py-2"
+            <button
+              onClick={() => setView(AppView.PREMIUM)}
+              className="w-full flex items-center justify-center gap-2 text-sm text-[#FF5722] opacity-80 hover:opacity-100 py-2"
             >
               <Lock size={14} />
               <span className="font-bold">Unlock Crisis Pack ($4.99)</span>
@@ -485,65 +550,65 @@ export default function App() {
   );
 
   const PremiumScreen = () => (
-      <div className={`min-h-screen w-full flex flex-col ${THEME.bg} relative overflow-hidden animate-fade-in-up`}>
-           <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-[#FF5722]/20 to-transparent pointer-events-none" />
-           
-           <button 
-            onClick={() => setView(AppView.DASHBOARD)} 
-            className="absolute top-6 left-6 z-20 bg-black/40 p-2 rounded-full text-white hover:bg-white/10"
-           >
-               <X size={24} />
-           </button>
+    <div className={`min-h-screen w-full flex flex-col ${THEME.bg} relative overflow-hidden animate-fade-in-up`}>
+      <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-[#FF5722]/20 to-transparent pointer-events-none" />
 
-           <div className="flex-1 flex flex-col items-center p-8 pt-20 max-w-md mx-auto w-full z-10 text-center">
-                <div className="bg-gradient-to-br from-orange-500 to-red-600 p-4 rounded-3xl shadow-2xl shadow-orange-500/20 mb-6">
-                    <Lock className="text-white" size={40} />
-                </div>
-                
-                <h2 className="text-3xl font-bold text-white mb-2">Crisis Pack</h2>
-                <p className="text-white/60 mb-10">Unrestricted access to the world's best excuse generator.</p>
+      <button
+        onClick={() => setView(AppView.DASHBOARD)}
+        className="absolute top-6 left-6 z-20 bg-black/40 p-2 rounded-full text-white hover:bg-white/10"
+      >
+        <X size={24} />
+      </button>
 
-                <div className="w-full space-y-4 mb-10 text-left">
-                    {[
-                        "Unlimited Generations (No daily limits)",
-                        "Higher Quality '4K' Evidence",
-                        "Remove Watermarks",
-                        "Priority Server Access",
-                        "Stealth App Icon"
-                    ].map((feature, i) => (
-                        <div key={i} className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/5">
-                            <CheckCircle2 className="text-green-500 shrink-0" size={20} />
-                            <span className="font-medium text-white/90">{feature}</span>
-                        </div>
-                    ))}
-                </div>
+      <div className="flex-1 flex flex-col items-center p-8 pt-20 max-w-md mx-auto w-full z-10 text-center">
+        <div className="bg-gradient-to-br from-orange-500 to-red-600 p-4 rounded-3xl shadow-2xl shadow-orange-500/20 mb-6">
+          <Lock className="text-white" size={40} />
+        </div>
 
-                <div className="w-full space-y-3 mt-auto">
-                    <Button variant="premium" onClick={handleUnlock}>
-                         Pay $4.99 via Stripe
-                    </Button>
-                    <p className="text-xs text-white/30">
-                        Secured by Stripe. One-time payment.
-                    </p>
-                </div>
-           </div>
+        <h2 className="text-3xl font-bold text-white mb-2">Crisis Pack</h2>
+        <p className="text-white/60 mb-10">Unrestricted access to the world's best excuse generator.</p>
+
+        <div className="w-full space-y-4 mb-10 text-left">
+          {[
+            "Unlimited Generations (No daily limits)",
+            "Higher Quality '4K' Evidence",
+            "Remove Watermarks",
+            "Priority Server Access",
+            "Stealth App Icon"
+          ].map((feature, i) => (
+            <div key={i} className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/5">
+              <CheckCircle2 className="text-green-500 shrink-0" size={20} />
+              <span className="font-medium text-white/90">{feature}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="w-full space-y-3 mt-auto">
+          <Button variant="premium" onClick={handleUnlock}>
+            Pay $4.99 via Stripe
+          </Button>
+          <p className="text-xs text-white/30">
+            Secured by Stripe. One-time payment.
+          </p>
+        </div>
       </div>
+    </div>
   );
 
   const GeneratingScreen = () => (
     <div className={`h-screen w-full flex flex-col items-center justify-center p-6 ${THEME.bg} relative`}>
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
       <div className="text-center space-y-8 z-10">
-         <div className="relative inline-block">
-            <div className={`w-20 h-20 rounded-full border-4 border-t-[#FF5722] border-r-transparent border-b-transparent border-l-transparent animate-spin`}></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Siren className={THEME.accent} size={32} />
-            </div>
-         </div>
-         <div className="space-y-2">
-           <h2 className="text-2xl font-bold text-white animate-pulse">Processing...</h2>
-           <p className="text-white/50 font-mono text-sm">{loadingMessage}</p>
-         </div>
+        <div className="relative inline-block">
+          <div className={`w-20 h-20 rounded-full border-4 border-t-[#FF5722] border-r-transparent border-b-transparent border-l-transparent animate-spin`}></div>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Siren className={THEME.accent} size={32} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-white animate-pulse">Processing...</h2>
+          <p className="text-white/50 font-mono text-sm">{loadingMessage}</p>
+        </div>
       </div>
     </div>
   );
@@ -553,29 +618,29 @@ export default function App() {
       {/* The Evidence */}
       <div className="flex-1 relative overflow-hidden bg-gray-900">
         {generatedImage && (
-          <img 
-            src={generatedImage} 
-            alt="Generated Evidence" 
+          <img
+            src={generatedImage}
+            alt="Generated Evidence"
             className="w-full h-full object-cover animate-in fade-in duration-700"
           />
         )}
-        
+
         {/* Overlay gradient for readability of controls */}
         <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/90 to-transparent pointer-events-none" />
-        
+
         {/* Top Controls */}
         <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-start z-20">
-          <button 
+          <button
             onClick={handleReset}
             className="bg-black/40 backdrop-blur-md p-3 rounded-full text-white/80 hover:bg-black/60 transition-all border border-white/10"
           >
             <RotateCcw size={20} />
           </button>
           <div className="bg-red-500/20 backdrop-blur-md px-3 py-1 rounded-full border border-red-500/30">
-             <span className="text-red-500 text-xs font-bold uppercase tracking-widest flex items-center gap-1">
-               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-               Evidence
-             </span>
+            <span className="text-red-500 text-xs font-bold uppercase tracking-widest flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+              Evidence
+            </span>
           </div>
         </div>
       </div>
