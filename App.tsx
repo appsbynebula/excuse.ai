@@ -326,38 +326,9 @@ export default function App() {
     }
   };
 
-  const handleUnlock = async () => {
-    try {
-      const stripe = await stripePromise;
-      if (!stripe) throw new Error("Stripe not initialized");
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const priceId = import.meta.env.VITE_STRIPE_PRICE_ID;
-
-      if (!supabaseUrl || !priceId) {
-        throw new Error("Missing config");
-      }
-
-      const response = await fetch(`${supabaseUrl}/functions/v1/create-checkout-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          priceId: priceId,
-          returnUrl: window.location.origin
-        })
-      });
-
-      const { url, error } = await response.json();
-      if (error) throw new Error(error);
-      if (url) window.location.href = url;
-
-    } catch (e) {
-      console.warn("Payment failed (Dev Mode fallback):", e);
-      // Fallback for dev/demo: Unlock anyway so user can test
-      setUserState(prev => ({ ...prev, isPremium: true, credits: 999 }));
-      setView(AppView.DASHBOARD);
-      alert("Dev Mode: Payment bypassed (Supabase function not reachable). Premium unlocked.");
-    }
+  const handleUnlock = () => {
+    // Redirect to the Stripe Payment Link provided
+    window.location.href = "https://buy.stripe.com/test_3cIbJ08ih453g3ge7E8AE02";
   };
 
   // --- Screens ---
