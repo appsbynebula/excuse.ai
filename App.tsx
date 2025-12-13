@@ -21,11 +21,11 @@ import {
 import confetti from 'canvas-confetti';
 import { AppView, ExcuseOption, UserState, HistoryItem } from './types';
 import { generateEvidence } from './services/geminiService';
-import { loadStripe } from '@stripe/stripe-js';
+import { supabase } from './src/lib/supabaseClient';
 import { CyberShield } from './src/components/CyberShield';
 
 // Initialize Stripe outside component
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+// const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
 
 // --- Constants ---
 const THEME = {
@@ -119,7 +119,7 @@ export default function App() {
   const [referenceImage, setReferenceImage] = useState<string | null>(null); // For image-to-image
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [userState, setUserState] = useState<UserState>({
-    credits: 1,
+    credits: 0,
     isPremium: false,
     isGuest: false,
     history: []
@@ -127,17 +127,29 @@ export default function App() {
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [hasWelcomed, setHasWelcomed] = useState(false); // Track if celebration happened
   const [authMode, setAuthMode] = useState<'menu' | 'email'>('menu'); // Auth screen state
+  const [email, setEmail] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Persistence & Init ---
 
   useEffect(() => {
-    // 1. Load state
-    const saved = localStorage.getItem('excuse_ai_state');
-    if (saved) {
-      setUserState(JSON.parse(saved));
-    }
+    // 1. Check Supabase Session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        // Load user profile/credits if you have a DB table, or just basic auth for now
+        // For now, we assume standard users start with 0 credits unless paid
+        // We can keep localStorage for history if we don't have a DB sync yet
+        const saved = localStorage.getItem('excuse_ai_state');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setUserState(prev => ({ ...prev, ...parsed, isGuest: false, credits: Math.min(parsed.credits, 999) })); // Safety check
+        } else {
+          setView(AppView.DASHBOARD);
+        }
+      }
+    });
+
 
     // 2. Check Stripe Return
     const query = new URLSearchParams(window.location.search);
@@ -232,12 +244,27 @@ export default function App() {
     }
   }, [view, hasWelcomed]);
 
-  const handleLogin = (isGuest: boolean) => {
-    setUserState(prev => ({ ...prev, isGuest }));
-    // Simulate auth delay
-    setTimeout(() => {
+  const handleLogin = async (isGuest: boolean) => {
+    if (isGuest) {
+      setUserState(prev => ({ ...prev, isGuest: true, credits: 0 }));
       setView(AppView.DASHBOARD);
-    }, 600);
+      return;
+    }
+
+    // Provider Login (Apple/Google placeholders if keys not set, or throw error)
+    // For specific provider buttons:
+    // supabase.auth.signInWithOAuth({ provider: 'google' });
+  };
+
+  const handleEmailLogin = async () => {
+    if (!email) return;
+    const { error } = await supabase.auth.signInWithOtp({ email });
+    if (error) {
+      alert(error.message);
+    } else {
+      alert('Check your email for the login link!');
+      setAuthMode('menu');
+    }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -360,14 +387,14 @@ export default function App() {
         <div className="w-full space-y-4">
           {authMode === 'menu' ? (
             <>
-              <Button variant="secondary" onClick={() => handleLogin(false)} icon={Fingerprint}>
+              <Button variant="secondary" onClick={() => supabase.auth.signInWithOAuth({ provider: 'apple' })} icon={Fingerprint}>
                 Continue with Apple
               </Button>
-              <Button variant="ghost" onClick={() => handleLogin(false)}>
+              <Button variant="ghost" onClick={() => supabase.auth.signInWithOAuth({ provider: 'google' })}>
                 Continue with Google
               </Button>
               <Button variant="ghost" onClick={() => setAuthMode('email')} icon={Mail}>
-                Use Email or Phone
+                Use Email
               </Button>
 
               <div className="pt-4">
@@ -381,10 +408,14 @@ export default function App() {
             </>
           ) : (
             <div className="space-y-4 w-full animate-fade-in-up">
-              <Input placeholder="Full Name" />
-              <Input placeholder="Email or Phone Number" type="email" />
-              <Button variant="primary" onClick={() => handleLogin(false)}>
-                Sign In / Register
+              <Input
+                placeholder="Email Address"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Button variant="primary" onClick={handleEmailLogin}>
+                Send Magic Link
               </Button>
               <button
                 onClick={() => setAuthMode('menu')}
@@ -593,11 +624,21 @@ export default function App() {
       {/* The Evidence */}
       <div className="flex-1 relative overflow-hidden bg-gray-900">
         {generatedImage && (
-          <img
-            src={generatedImage}
-            alt="Generated Evidence"
-            className="w-full h-full object-cover animate-in fade-in duration-700"
-          />
+          <div className="relative w-full h-full">
+            <img
+              src={generatedImage}
+              alt="Generated Evidence"
+              className={`w-full h-full object-cover animate-in fade-in duration-700 ${userState.isGuest ? 'blur-xl' : ''}`}
+            />
+            {userState.isGuest && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 z-30 p-8 text-center">
+                <Lock size={48} className="text-white mb-4" />
+                <h3 className="text-2xl font-bold text-white mb-2">Evidence Redacted</h3>
+                <p className="text-white/70 mb-6">Create a free account to view your generated evidence.</p>
+                <Button onClick={() => setView(AppView.AUTH)}>Sign In / Register</Button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Overlay gradient for readability of controls */}
