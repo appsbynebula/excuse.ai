@@ -126,8 +126,10 @@ export default function App() {
   });
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [hasWelcomed, setHasWelcomed] = useState(false); // Track if celebration happened
-  const [authMode, setAuthMode] = useState<'menu' | 'email'>('menu'); // Auth screen state
+  const [authMode, setAuthMode] = useState<'menu' | 'login' | 'signup'>('menu'); // Auth screen state
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -149,7 +151,6 @@ export default function App() {
         }
       }
     });
-
 
     // 2. Check Stripe Return
     const query = new URLSearchParams(window.location.search);
@@ -257,13 +258,39 @@ export default function App() {
   };
 
   const handleEmailLogin = async () => {
-    if (!email) return;
-    const { error } = await supabase.auth.signInWithOtp({ email });
+    if (!email || !password) {
+      alert("Please enter both email and password.");
+      return;
+    }
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
     if (error) {
       alert(error.message);
     } else {
-      alert('Check your email for the login link!');
-      setAuthMode('menu');
+      // Session handling in useEffect will catch the update
+      setView(AppView.DASHBOARD);
+    }
+  };
+
+  const handleEmailSignup = async () => {
+    if (!email || !password || !fullName) {
+      alert("Please fill in all fields.");
+      return;
+    }
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: fullName }
+      }
+    });
+    if (error) {
+      alert(error.message);
+    } else {
+      alert("Registration successful! Please check your email to confirm.");
+      setAuthMode('login');
     }
   };
 
@@ -385,7 +412,7 @@ export default function App() {
         </div>
 
         <div className="w-full space-y-4">
-          {authMode === 'menu' ? (
+          {authMode === 'menu' && (
             <>
               <Button variant="secondary" onClick={() => supabase.auth.signInWithOAuth({ provider: 'apple' })} icon={Fingerprint}>
                 Continue with Apple
@@ -393,7 +420,7 @@ export default function App() {
               <Button variant="ghost" onClick={() => supabase.auth.signInWithOAuth({ provider: 'google' })}>
                 Continue with Google
               </Button>
-              <Button variant="ghost" onClick={() => setAuthMode('email')} icon={Mail}>
+              <Button variant="ghost" onClick={() => setAuthMode('login')} icon={Mail}>
                 Use Email
               </Button>
 
@@ -406,7 +433,9 @@ export default function App() {
                 </button>
               </div>
             </>
-          ) : (
+          )}
+
+          {authMode === 'login' && (
             <div className="space-y-4 w-full animate-fade-in-up">
               <Input
                 placeholder="Email Address"
@@ -414,15 +443,64 @@ export default function App() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
+              <Input
+                placeholder="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
               <Button variant="primary" onClick={handleEmailLogin}>
-                Send Magic Link
+                Log In
               </Button>
-              <button
-                onClick={() => setAuthMode('menu')}
-                className="w-full flex items-center justify-center gap-2 text-white/50 hover:text-white py-2 font-medium"
-              >
-                <ArrowLeft size={16} /> Back
-              </button>
+
+              <div className="flex flex-col gap-4 mt-4 text-center">
+                <button onClick={() => setAuthMode('signup')} className="text-white/50 text-sm hover:text-white">
+                  Don't have an account? <span className="text-white font-bold underline">Sign Up</span>
+                </button>
+                <button
+                  onClick={() => setAuthMode('menu')}
+                  className="flex items-center justify-center gap-2 text-white/50 hover:text-white py-2 font-medium"
+                >
+                  <ArrowLeft size={16} /> Back to Options
+                </button>
+              </div>
+            </div>
+          )}
+
+          {authMode === 'signup' && (
+            <div className="space-y-4 w-full animate-fade-in-up">
+              <Input
+                placeholder="Full Name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
+              <Input
+                placeholder="Email Address"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Input
+                placeholder="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <Button variant="primary" onClick={handleEmailSignup}>
+                Sign Up
+              </Button>
+
+              <div className="flex flex-col gap-4 mt-4 text-center">
+                <button onClick={() => setAuthMode('login')} className="text-white/50 text-sm hover:text-white">
+                  Already have an account? <span className="text-white font-bold underline">Log In</span>
+                </button>
+                <button
+                  onClick={() => setAuthMode('menu')}
+                  className="flex items-center justify-center gap-2 text-white/50 hover:text-white py-2 font-medium"
+                >
+                  <ArrowLeft size={16} /> Back to Options
+                </button>
+              </div>
             </div>
           )}
         </div>
