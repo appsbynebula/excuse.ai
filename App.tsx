@@ -387,7 +387,27 @@ export default function App() {
 
   // --- Screens ---
 
-  const AuthScreen = () => (
+  interface AuthScreenProps {
+    authMode: 'menu' | 'login' | 'signup';
+    setAuthMode: (mode: 'menu' | 'login' | 'signup') => void;
+    email: string;
+    setEmail: (s: string) => void;
+    password: string;
+    setPassword: (s: string) => void;
+    fullName: string;
+    setFullName: (s: string) => void;
+    handleLogin: (isGuest: boolean) => void;
+    handleEmailLogin: () => void;
+    handleEmailSignup: () => void;
+  }
+
+  const AuthScreen = ({
+    authMode, setAuthMode,
+    email, setEmail,
+    password, setPassword,
+    fullName, setFullName,
+    handleLogin, handleEmailLogin, handleEmailSignup
+  }: AuthScreenProps) => (
     <div className={`h-screen w-full flex flex-col items-center justify-center p-6 relative overflow-hidden ${THEME.bg}`}>
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] glow-effect rounded-full blur-[80px] opacity-40 pointer-events-none" />
 
@@ -508,9 +528,18 @@ export default function App() {
     </div>
   );
 
-  const DashboardScreen = () => (
+  const DashboardScreen = ({
+    userState,
+    prompt, setPrompt,
+    referenceImage,
+    fileInputRef,
+    handleImageUpload,
+    QUICK_EXCUSES,
+    handleQuickExcuse,
+    handleGenerate,
+    setView
+  }: any) => (
     <div className={`min-h-screen w-full flex flex-col ${THEME.bg} animate-fade-in-up`}>
-      {/* Header */}
       <header className="p-6 flex justify-between items-center z-10">
         <div className="flex items-center gap-2">
           <Siren className={THEME.accent} size={24} />
@@ -579,7 +608,7 @@ export default function App() {
               Quick Emergencies
             </label>
             <div className="grid grid-cols-2 gap-3">
-              {QUICK_EXCUSES.map((opt) => (
+              {QUICK_EXCUSES.map((opt: any) => (
                 <button
                   key={opt.id}
                   onClick={() => handleQuickExcuse(opt)}
@@ -599,7 +628,7 @@ export default function App() {
                 <History size={12} /> Past Alibis
               </label>
               <div className="space-y-2">
-                {userState.history.map((item) => (
+                {userState.history.map((item: any) => (
                   <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
                     <img src={item.imageUrl} alt="thumb" className="w-10 h-10 rounded-lg object-cover grayscale opacity-70" />
                     <div className="flex-1 min-w-0">
@@ -633,7 +662,7 @@ export default function App() {
     </div>
   );
 
-  const PremiumScreen = () => (
+  const PremiumScreen = ({ setView, handleUnlock }: any) => (
     <div className={`min-h-screen w-full flex flex-col ${THEME.bg} relative overflow-hidden animate-fade-in-up`}>
       <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-[#FF5722]/20 to-transparent pointer-events-none" />
 
@@ -679,7 +708,7 @@ export default function App() {
     </div>
   );
 
-  const GeneratingScreen = () => (
+  const GeneratingScreen = ({ loadingMessage }: any) => (
     <div className={`h-screen w-full flex flex-col items-center justify-center p-6 ${THEME.bg} relative`}>
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
       <div className="text-center space-y-8 z-10">
@@ -697,7 +726,7 @@ export default function App() {
     </div>
   );
 
-  const ResultScreen = () => (
+  const ResultScreen = ({ generatedImage, userState, handleReset, handleShare, setView }: any) => (
     <div className="h-screen w-full bg-black relative flex flex-col">
       {/* The Evidence */}
       <div className="flex-1 relative overflow-hidden bg-gray-900">
@@ -756,15 +785,312 @@ export default function App() {
     </div>
   );
 
-  // --- Render Logic ---
+  export default function App() {
+    const [view, setView] = useState<AppView>(AppView.AUTH);
+    const [prompt, setPrompt] = useState('');
+    const [referenceImage, setReferenceImage] = useState<string | null>(null); // For image-to-image
+    const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+    const [userState, setUserState] = useState<UserState>({
+      credits: 0,
+      isPremium: false,
+      isGuest: false,
+      history: []
+    });
+    const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
+    const [hasWelcomed, setHasWelcomed] = useState(false); // Track if celebration happened
+    const [authMode, setAuthMode] = useState<'menu' | 'login' | 'signup'>('menu'); // Auth screen state
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [fullName, setFullName] = useState('');
 
-  return (
-    <>
-      {view === AppView.AUTH && <AuthScreen />}
-      {view === AppView.DASHBOARD && <DashboardScreen />}
-      {view === AppView.GENERATING && <GeneratingScreen />}
-      {view === AppView.RESULT && <ResultScreen />}
-      {view === AppView.PREMIUM && <PremiumScreen />}
-    </>
-  );
-}
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // --- Persistence & Init ---
+
+    useEffect(() => {
+      // 1. Check Supabase Session
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          // Load user profile/credits if you have a DB table, or just basic auth for now
+          // For now, we assume standard users start with 0 credits unless paid
+          // We can keep localStorage for history if we don't have a DB sync yet
+          const saved = localStorage.getItem('excuse_ai_state');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            setUserState(prev => ({ ...prev, ...parsed, isGuest: false, credits: Math.min(parsed.credits, 999) })); // Safety check
+          } else {
+            setView(AppView.DASHBOARD);
+          }
+        }
+      });
+
+      // 2. Check Stripe Return
+      const query = new URLSearchParams(window.location.search);
+      if (query.get('success')) {
+        setUserState(prev => {
+          const newState = { ...prev, isPremium: true, credits: 999 };
+          localStorage.setItem('excuse_ai_state', JSON.stringify(newState));
+          return newState;
+        });
+        setView(AppView.DASHBOARD);
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setTimeout(() => triggerConfetti(), 500);
+      } else if (query.get('canceled')) {
+        setView(AppView.PREMIUM);
+        alert("Payment canceled.");
+      }
+    }, []);
+
+    // Save state on change
+    useEffect(() => {
+      localStorage.setItem('excuse_ai_state', JSON.stringify(userState));
+    }, [userState]);
+
+    // Play sound effect
+    const playSound = () => {
+      try {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContext) {
+          const ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.value = 800;
+          gain.gain.value = 0.1;
+          osc.start();
+          gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.5);
+          osc.stop(ctx.currentTime + 0.5);
+        }
+      } catch (e) {
+        console.error("Audio play failed", e);
+      }
+    };
+
+    // Confetti Effect
+    const triggerConfetti = () => {
+      const duration = 2000;
+      const end = Date.now() + duration;
+
+      (function frame() {
+        confetti({
+          particleCount: 5,
+          angle: 60,
+          spread: 55,
+          origin: { x: 0 },
+          colors: ['#FF5722', '#ffffff']
+        });
+        confetti({
+          particleCount: 5,
+          angle: 120,
+          spread: 55,
+          origin: { x: 1 },
+          colors: ['#FF5722', '#ffffff']
+        });
+
+        if (Date.now() < end) {
+          requestAnimationFrame(frame);
+        }
+      }());
+    };
+
+    // Loading text cycle
+    useEffect(() => {
+      if (view === AppView.GENERATING) {
+        let i = 0;
+        const interval = setInterval(() => {
+          i = (i + 1) % LOADING_MESSAGES.length;
+          setLoadingMessage(LOADING_MESSAGES[i]);
+        }, 800);
+        return () => clearInterval(interval);
+      }
+    }, [view]);
+
+    // Effect when entering dashboard (Run only once)
+    useEffect(() => {
+      if (view === AppView.DASHBOARD && !hasWelcomed) {
+        triggerConfetti();
+        playSound();
+        setHasWelcomed(true);
+      }
+    }, [view, hasWelcomed]);
+
+    const handleLogin = async (isGuest: boolean) => {
+      if (isGuest) {
+        setUserState(prev => ({ ...prev, isGuest: true, credits: 0 }));
+        setView(AppView.DASHBOARD);
+        return;
+      }
+
+      // Provider Login (Apple/Google placeholders if keys not set, or throw error)
+      // For specific provider buttons:
+      // supabase.auth.signInWithOAuth({ provider: 'google' });
+    };
+
+    const handleEmailLogin = async () => {
+      if (!email || !password) {
+        alert("Please enter both email and password.");
+        return;
+      }
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+      if (error) {
+        alert(error.message);
+      } else {
+        // Session handling in useEffect will catch the update
+        setView(AppView.DASHBOARD);
+      }
+    };
+
+    const handleEmailSignup = async () => {
+      if (!email || !password || !fullName) {
+        alert("Please fill in all fields.");
+        return;
+      }
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: fullName }
+        }
+      });
+      if (error) {
+        alert(error.message);
+      } else {
+        alert("Registration successful! Please check your email to confirm.");
+        setAuthMode('login');
+      }
+    };
+
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setReferenceImage(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+
+    const handleQuickExcuse = (option: ExcuseOption) => {
+      setPrompt(option.label); // Fill text
+    };
+
+    const handleGenerate = async () => {
+      if (!prompt) return;
+
+      if (userState.credits <= 0 && !userState.isPremium) {
+        setView(AppView.PREMIUM);
+        return;
+      }
+
+      setView(AppView.GENERATING);
+
+      try {
+        const imageUrl = await generateEvidence(prompt, referenceImage);
+        setGeneratedImage(imageUrl);
+
+        // Update state
+        setUserState(prev => {
+          const newHistory = prev.isGuest ? [] : [{
+            id: Date.now().toString(),
+            prompt: prompt,
+            date: new Date().toLocaleDateString(),
+            imageUrl: imageUrl
+          }, ...prev.history];
+
+          return {
+            ...prev,
+            credits: Math.max(0, prev.credits - 1),
+            history: newHistory
+          };
+        });
+
+        setView(AppView.RESULT);
+      } catch (e) {
+        console.error(e);
+        setView(AppView.DASHBOARD);
+      }
+    };
+
+    const handleReset = () => {
+      setGeneratedImage(null);
+      setPrompt('');
+      setReferenceImage(null);
+      setView(AppView.DASHBOARD);
+    };
+
+    const handleShare = async () => {
+      if (!generatedImage) return;
+
+      try {
+        // 1. Fetch the image and convert to Blob
+        const response = await fetch(generatedImage);
+        const blob = await response.blob();
+
+        // 2. Create a File object
+        const file = new File([blob], "evidence.png", { type: blob.type });
+
+        // 3. Check for native sharing support
+        if (navigator.share) {
+          await navigator.share({
+            title: 'Evidence',
+            text: 'Here is the proof you asked for.',
+            files: [file],
+          });
+        } else {
+          alert("Native sharing not supported on this browser. Use 'Save to Camera Roll' instead.");
+        }
+      } catch (error) {
+        console.error("Error sharing:", error);
+        alert("Could not share image.");
+      }
+    };
+
+    const handleUnlock = () => {
+      // Redirect to the Stripe Payment Link provided
+      window.location.href = "https://buy.stripe.com/test_3cIbJ08ih453g3ge7E8AE02";
+    };
+
+    return (
+      <>
+        {view === AppView.AUTH && <AuthScreen
+          authMode={authMode} setAuthMode={setAuthMode}
+          email={email} setEmail={setEmail}
+          password={password} setPassword={setPassword}
+          fullName={fullName} setFullName={setFullName}
+          handleLogin={handleLogin}
+          handleEmailLogin={handleEmailLogin}
+          handleEmailSignup={handleEmailSignup}
+        />}
+        {view === AppView.DASHBOARD && <DashboardScreen
+          userState={userState}
+          prompt={prompt} setPrompt={setPrompt}
+          referenceImage={referenceImage}
+          fileInputRef={fileInputRef}
+          handleImageUpload={handleImageUpload}
+          QUICK_EXCUSES={QUICK_EXCUSES}
+          handleQuickExcuse={handleQuickExcuse}
+          handleGenerate={handleGenerate}
+          setView={setView}
+        />}
+        {view === AppView.GENERATING && <GeneratingScreen loadingMessage={loadingMessage} />}
+        {view === AppView.RESULT && <ResultScreen
+          generatedImage={generatedImage}
+          userState={userState}
+          handleReset={handleReset}
+          handleShare={handleShare}
+          setView={setView}
+        />}
+        {view === AppView.PREMIUM && <PremiumScreen
+          setView={setView}
+          handleUnlock={handleUnlock}
+        />}
+      </>
+    );
+  }
